@@ -26,16 +26,6 @@ import (
 	"github.com/vishvananda/netlink"
 	"io/ioutil"
 	"os"
-	"strconv"
-	"strings"
-)
-
-const (
-	MANAGERROUTETABLE    = 501
-	MANAGERROUTEPREFER   = 501
-	TOMANAGERROUTEPREFER = 502
-	IPV4MASK             = 32
-	IPV6MASK             = 128
 )
 
 type Controller struct {
@@ -76,7 +66,10 @@ func (c *Controller) SetPolicyRoute(l log.Logger, config *config.Config) error {
 	oldResource := c.Client.OldResource
 	cmpVip := config.CmpVip
 	managerNetwork := config.ManagerNetwork
+	var oldmanagerNetwork string
+	var oldCmpVip string
 
+	// 访问cmpvip 和 部署集群的服务管理网必须配置
 	if len(cmpVip) == 0 || len(managerNetwork) == 0 {
 		level.Error(l).Log("op", "setConfig", "error", "msg", "cmpVip or managerNetwork is missing, cloud-router-manager will not function")
 		return fmt.Errorf("configuration [cmpVip or managerNetwork] is missing, cloud-router-manager will not function")
@@ -85,76 +78,27 @@ func (c *Controller) SetPolicyRoute(l log.Logger, config *config.Config) error {
 	if oldResource != nil && oldResource.Data["cmpVip"] != cmpVip {
 		level.Debug(l).Log("op", "setConfig", "msg", "cmpVip changed, old cmpVip:", oldResource.Data["cmpVip"], "new cmpVip:", cmpVip)
 		cmpVipChanged = true
+		oldCmpVip = oldResource.Data["cmpVip"]
 	}
 
 	if oldResource != nil && oldResource.Data["managerNetwork"] != managerNetwork {
 		level.Debug(l).Log("op", "setConfig", "msg", "cmpVip changed, old cmpVip:", oldResource.Data["cmpVip"], "new cmpVip:", cmpVip)
 		managerChanged = true
+		oldmanagerNetwork = oldResource.Data["managerNetwork"]
 	}
 
 	// ip rule add from managerNetwork/CIDR prefer 501 table 501
-	if !strings.Contains(managerNetwork, "/") {
-		managerNetwork = fmt.Sprintf("%s/%s", managerNetwork, "32")
-	}
-	cidr, err := netlink.ParseIPNet(managerNetwork)
-	if err != nil {
-		level.Error(l).Log(
-			"op", "setConfig",
-			"error", err,
-			"msg", "failed to parse managerNetwork",
-			"managerNetwork", config.ManagerNetwork, // 添加具体的配置值作为上下文
-		)
+	if err := router.EnsureFromPolicyRoute(l, managerNetwork, oldmanagerNetwork, managerChanged); err != nil {
 		return err
-	}
-	mask := strings.Split(managerNetwork, "/")[1]
-	maskInt, _ := strconv.Atoi(mask)
-	ruleExsit, _, err := router.CheckIfRuleExist(cidr, nil, MANAGERROUTETABLE, netlink.FAMILY_V4)
-	if err != nil {
-		return fmt.Errorf("failed to check rule (dst: %v, table: %v) exist: %v", cmpVip, MANAGERROUTETABLE, err)
-	}
-
-	if !ruleExsit {
-		level.Debug(l).Log("op", "setConfig", "msg", "rule not exist, create rule")
-		if err := router.AddRule(cidr.String(), "", maskInt, MANAGERROUTETABLE, netlink.FAMILY_V4, MANAGERROUTEPREFER); err != nil {
-			return fmt.Errorf("failed to add rule (dst: %v, table: %v) exist: %v", cidr.String(), MANAGERROUTETABLE, err)
-		}
-	}
-
-	if managerChanged {
-		level.Debug(l).Log("op", "setConfig", "msg", "managerNetwork changed, delete old rule")
-		if err := router.DeleteRule(cidr.String(), "", maskInt, MANAGERROUTETABLE, netlink.FAMILY_V4); err != nil {
-			return fmt.Errorf("failed to delete rule (dst: %v, table: %v) exist: %v", cidr.String(), MANAGERROUTETABLE, err)
-		}
 	}
 
 	// ip rule add to cmpVip/CIDR prefer 502 table 501
-	dst, err := netlink.ParseIPNet(fmt.Sprintf("%s/%s", cmpVip, "32"))
-	if err != nil {
-		level.Error(l).Log("op", "setConfig", "error", err, "msg", "failed to parse cmpVip")
+	if err := router.EnsureToPolicyRoute(l, cmpVip, oldCmpVip, cmpVipChanged); err != nil {
 		return err
 	}
 
-	found, _, err := router.CheckIfRuleExist(nil, dst, MANAGERROUTETABLE, netlink.FAMILY_V4)
-	if err != nil {
-		return fmt.Errorf("failed to check rule (dst: %v, table: %v) exist: %v", cmpVip, MANAGERROUTETABLE, err)
-	}
-	if !found {
-		level.Debug(l).Log("op", "setConfig", "msg", "rule not exist, create rule")
-		if err := router.AddRule("", cmpVip, IPV4MASK, MANAGERROUTETABLE, netlink.FAMILY_V4, TOMANAGERROUTEPREFER); err != nil {
-			return fmt.Errorf("failed to add rule (dst: %v, table: %v) exist: %v", cmpVip, MANAGERROUTETABLE, err)
-		}
-	}
-
-	if cmpVipChanged {
-		level.Debug(l).Log("op", "setConfig", "msg", "cmpVip changed, delete old rule")
-		oldCmpVip := oldResource.Data["cmpVip"]
-		if err := router.DeleteRule("", oldCmpVip, IPV4MASK, MANAGERROUTETABLE, netlink.FAMILY_V4); err != nil {
-			return fmt.Errorf("failed to delete rule (dst: %v, table: %v) exist: %v", cmpVip, MANAGERROUTETABLE, err)
-		}
-	}
-
 	// ip route add default via cmpVipGateway table MANAGERROUTETABLE
-	if err := router.EnsureRoutes(config.CmpVipGateway, MANAGERROUTETABLE); err != nil {
+	if err := router.EnsureRoutes(config.CmpVipGateway, router.MANAGERROUTETABLE); err != nil {
 		return fmt.Errorf("failed to ensure routes: %v", err)
 	}
 
@@ -232,7 +176,7 @@ func (c *Controller) SetPodRoute(l log.Logger, icksConfig *config.Config) error 
 	level.Info(l).Log("op", "setPodRoute", "msg", "start to set pod route")
 
 	cmpVip := fmt.Sprintf("%s/%s", icksConfig.CmpVip, "32")
-	_, err := netlink.ParseIPNet(fmt.Sprintf("%s/%s", cmpVip, "32"))
+	_, err := netlink.ParseIPNet(cmpVip)
 	if err != nil {
 		level.Error(l).Log("op", "setConfig", "error", err, "msg", "failed to parse cmpVip")
 		return err
@@ -249,6 +193,9 @@ func (c *Controller) SetPodRoute(l log.Logger, icksConfig *config.Config) error 
 		level.Info(l).Log("op", "setConfig", "msg", "update cni config file")
 		if err = c.Client.UpdateSystemPodRoute(); err != nil {
 			level.Error(l).Log("op", "setConfig", "error", err, "msg", "failed to update system pod route")
+			return err
+		}
+		if err = router.UpdateIptablesRule(l, cmpVip, cmpVip, cmpVip, cmpVip); err != nil {
 			return err
 		}
 	}

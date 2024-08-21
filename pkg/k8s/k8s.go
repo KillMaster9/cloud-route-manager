@@ -234,7 +234,7 @@ func (c *Client) sync(key interface{}) SyncState {
 		err = yaml.Unmarshal([]byte(config.FormatData(cm.Data)), cfg)
 		if err != nil {
 			level.Error(l).Log("event", "configStale", "error", err, "msg", "config (re)load failed, config marked stale")
-			return SyncStateSuccess
+			return SyncStateError
 		}
 
 		level.Info(l).Log("op", "load configMap", cfg)
