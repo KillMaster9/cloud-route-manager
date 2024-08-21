@@ -231,11 +231,13 @@ func (c *Client) sync(key interface{}) SyncState {
 		// object changes to fix the issue.
 		cm := cmi.(*v1.ConfigMap)
 		cfg := &config.Config{}
-		err = yaml.Unmarshal([]byte(cm.Data["config"]), cfg)
+		err = yaml.Unmarshal([]byte(config.FormatData(cm.Data)), cfg)
 		if err != nil {
 			level.Error(l).Log("event", "configStale", "error", err, "msg", "config (re)load failed, config marked stale")
 			return SyncStateSuccess
 		}
+
+		level.Info(l).Log("op", "load configMap", cfg)
 
 		st := c.configChanged(l, cfg)
 		if st == SyncStateErrorNoRetry || st == SyncStateError {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"io/ioutil"
@@ -82,4 +83,12 @@ func UpdateCNIConfigFile(l log.Logger, hjckRoute string) (bool, error) {
 	level.Debug(l).Log("CNI config file updated successfully.", updatedData)
 
 	return true, nil
+}
+
+func FormatData(data map[string]string) string {
+	formattedData := ""
+	for k, v := range data {
+		formattedData += fmt.Sprintf("%s: %s\n", k, v)
+	}
+	return formattedData
 }

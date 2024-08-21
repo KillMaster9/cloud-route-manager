@@ -78,8 +78,8 @@ func (c *Controller) SetPolicyRoute(l log.Logger, config *config.Config) error {
 	managerNetwork := config.ManagerNetwork
 
 	if len(cmpVip) == 0 || len(managerNetwork) == 0 {
-		level.Error(l).Log("op", "setConfig", "error", "msg", "configuration is missing, cloud-router-manager will not function")
-		return fmt.Errorf("configuration is missing, cloud-router-manager will not function")
+		level.Error(l).Log("op", "setConfig", "error", "msg", "cmpVip or managerNetwork is missing, cloud-router-manager will not function")
+		return fmt.Errorf("configuration [cmpVip or managerNetwork] is missing, cloud-router-manager will not function")
 	}
 
 	if oldResource != nil && oldResource.Data["cmpVip"] != cmpVip {
@@ -170,7 +170,7 @@ func main() {
 		namespace  = flag.String("namespace", "kube-system", "config / icks-cluster-info namespace")
 		configName = flag.String("config", "icks-cluster-info", "config / configmap of record route's name")
 		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file (only needed when running outside of k8s)")
-		logLevel   = flag.String("log-level", "info", fmt.Sprintf("log level. must be one of: [%s]", logging.Levels.String()))
+		logLevel   = flag.String("log-level", "debug", fmt.Sprintf("log level. must be one of: [%s]", logging.Levels.String()))
 	)
 	flag.Parse()
 
@@ -215,6 +215,10 @@ func main() {
 }
 
 func (c *Controller) SetPodRoute(l log.Logger, icksConfig *config.Config) error {
+	if icksConfig.Cni == "calico" {
+		return nil
+	}
+
 	//CMP容灾备份功能，在cmpVip发生改变时，触发此流程
 	oldResource := c.Client.OldResource
 
