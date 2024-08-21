@@ -1,0 +1,29 @@
+FROM golang:1.21.0 as builder
+
+ENV ARCH=arm64
+ENV OS=linux
+
+WORKDIR /go/src/cloud-route-manager
+
+COPY go.mod ./go.mod
+COPY go.sum ./go.sum
+# cache deps before building and copying source so that we don't need to re-download as much
+# and so that source changes don't invalidate our downloaded layer
+RUN go mod download
+
+COPY . /go/src/cloud-route-manager
+
+RUN export GOCACHE=/tmp && \
+    export GO111MODULE=on && \
+    export GOARCH=${ARCH} && \
+    export CGO_ENABLED=0 && \
+    export GOOS=${OS} && \
+    go build -o /go/bin/cloud-route-manager ./controller
+
+FROM alpine:3.14
+LABEL maintainer="Cloud-Barista Contributors"
+WORKDIR /cloud-route-manager
+COPY --from=builder /go/bin/cloud-route-manager /cloud-route-manager/controller
+RUN chmod +x /cloud-route-manager/controller
+
+ENTRYPOINT ["/cloud-route-manager/controller"]
