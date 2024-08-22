@@ -244,7 +244,7 @@ func checkAndDeleteExistingIptablesRules(srcSetName, dstSetName string) error {
 
 	// 执行 iptables 检查命令
 	if out, err := cmdCheck.CombinedOutput(); err != nil {
-		if strings.Contains(string(out), "No chain/target/match by that name") {
+		if strings.Contains(string(out), "No chain/target/match by that name") || strings.Contains(string(out), "doesn't exist") {
 			// 规则不存在，无需删除
 			return nil
 		}

@@ -20,9 +20,12 @@ RUN export GOCACHE=/tmp && \
     export GOOS=${OS} && \
     go build -o /go/bin/cloud-route-manager ./controller
 
-FROM centos:latest
+FROM alpine:latest
 
-RUN yum install -y iptables-services && yum clean all
+RUN apk add --no-cache iptables && \
+    apk add --no-cache ipset && \
+    apk add --no-cache bash
+
 LABEL maintainer="Cloud-Barista Contributors"
 WORKDIR /cloud-route-manager
 COPY --from=builder /go/bin/cloud-route-manager /cloud-route-manager/controller
