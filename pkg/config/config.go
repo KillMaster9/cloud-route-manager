@@ -14,14 +14,15 @@ const (
 )
 
 type Config struct {
-	BussinessVip   string `yaml:"bussinessVip"`
-	ClusterId      string `yaml:"clusterId"`
-	CmpVip         string `yaml:"cmpVip"`
-	Cni            string `yaml:"cni"`
-	DeployNode     string `yaml:"deployNode"`
-	LvmDeviceClass string `yaml:"lvmDeviceClass"`
-	CmpVipGateway  string `yaml:"managerGateway"`
-	ManagerNetwork string `yaml:"managerNetwork"`
+	BussinessVip    string `yaml:"bussinessVip"`
+	ClusterId       string `yaml:"clusterId"`
+	CmpVip          string `yaml:"cmpVip"`
+	Cni             string `yaml:"cni"`
+	DeployNode      string `yaml:"deployNode"`
+	LvmDeviceClass  string `yaml:"lvmDeviceClass"`
+	CmpVipGateway   string `yaml:"managerGateway"`
+	ManagerNetwork  string `yaml:"managerNetwork"`
+	BusinessNetwork string `yaml:"bussinessNetwork"`
 }
 
 type CNIConfig struct {

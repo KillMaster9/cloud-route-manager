@@ -206,7 +206,7 @@ func createIPSet(ipList []string, setName string) error {
 	for _, ipStr := range ipList {
 		ip := net.ParseIP(ipStr)
 		if ip == nil {
-			return fmt.Errorf("invalid IP address: %s", ipStr)
+			continue
 		}
 
 		cmd = exec.CommandContext(context.Background(), "ipset", "add", setName, ipStr)
@@ -262,6 +262,14 @@ func checkAndDeleteExistingIptablesRules(srcSetName, dstSetName string) error {
 		return fmt.Errorf("failed to delete iptables rule: %v, output: %s", err, out)
 	}
 
+	// 删除 ipset 资源
+	if err := deleteIpsetResource(srcSetName); err != nil {
+		return fmt.Errorf("failed to delete ipset resource %s: %v", srcSetName, err)
+	}
+	if err := deleteIpsetResource(dstSetName); err != nil {
+		return fmt.Errorf("failed to delete ipset resource %s: %v", dstSetName, err)
+	}
+
 	return nil
 }
 
@@ -308,6 +316,19 @@ func UpdateIptablesRule(l log.Logger, src, dst, oldSrc, oldDst string) error {
 	if err := EnsureIptableRule(src, dst, oldSrc, oldDst); err != nil {
 		level.Error(l).Log("op", "setConfig", "error", err, "msg", "failed to ensure iptables rule")
 		return err
+	}
+
+	return nil
+}
+
+// deleteIpsetResource 删除指定名称的ipset资源。
+func deleteIpsetResource(setName string) error {
+	// 构建删除 ipset 命令
+	cmdDelete := exec.CommandContext(context.Background(), "ipset", "destroy", setName)
+
+	// 执行删除 ipset 命令
+	if out, err := cmdDelete.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to delete ipset resource: %v, output: %s", err, out)
 	}
 
 	return nil
