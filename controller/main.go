@@ -203,9 +203,9 @@ func (c *Controller) SetPodRoute(l log.Logger, icksConfig *config.Config) error 
 			level.Error(l).Log("op", "setConfig", "error", err, "msg", "failed to update system pod route")
 			return err
 		}
-		if err = router.UpdateIptablesRule(l, icksConfig.BusinessNetwork, cmpVip, oldBusinessNetwork, oldCmpVip); err != nil {
-			return err
-		}
+	}
+	if err = router.UpdateIptablesRule(l, icksConfig.BusinessNetwork, cmpVip, oldBusinessNetwork, oldCmpVip); err != nil {
+		return err
 	}
 
 	return nil
