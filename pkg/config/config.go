@@ -20,7 +20,7 @@ type Config struct {
 	Cni              string `yaml:"cni"`
 	DeployNode       string `yaml:"deployNode"`
 	LvmDeviceClass   string `yaml:"lvmDeviceClass"`
-	CmpVipGateway    string `yaml:"managerGateway"`
+	ManagerGateway   string `yaml:"managerGateway"`
 	ManagerNetwork   string `yaml:"managerNetwork"`
 	BussinessNetwork string `yaml:"bussinessNetwork"`
 }

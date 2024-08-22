@@ -98,7 +98,7 @@ func (c *Controller) SetPolicyRoute(l log.Logger, config *config.Config) error {
 	}
 
 	// ip route add default via cmpVipGateway table MANAGERROUTETABLE
-	if err := router.EnsureRoutes(config.CmpVipGateway, router.MANAGERROUTETABLE); err != nil {
+	if err := router.EnsureRoutes(config.ManagerGateway, router.MANAGERROUTETABLE); err != nil {
 		return fmt.Errorf("failed to ensure routes: %v", err)
 	}
 
