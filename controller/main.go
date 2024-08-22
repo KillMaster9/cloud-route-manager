@@ -173,7 +173,7 @@ func (c *Controller) SetPodRoute(l log.Logger, icksConfig *config.Config) error 
 		return fmt.Errorf("configuration cmpVip is missing, cloud-router-manager will not function")
 	}
 
-	if oldResource != nil && oldResource.Data["cmpVip"] == icksConfig.CmpVip && oldResource.Data["bussinessNetwork"] == icksConfig.BusinessNetwork {
+	if oldResource != nil && oldResource.Data["cmpVip"] == icksConfig.CmpVip && oldResource.Data["bussinessNetwork"] == icksConfig.BussinessNetwork {
 		return nil
 	}
 	level.Info(l).Log("op", "setPodRoute", "msg", "start to set pod route")
@@ -204,7 +204,7 @@ func (c *Controller) SetPodRoute(l log.Logger, icksConfig *config.Config) error 
 			return err
 		}
 	}
-	if err = router.UpdateIptablesRule(l, icksConfig.BusinessNetwork, cmpVip, oldBusinessNetwork, oldCmpVip); err != nil {
+	if err = router.UpdateIptablesRule(l, icksConfig.BussinessNetwork, cmpVip, oldBusinessNetwork, oldCmpVip); err != nil {
 		return err
 	}
 

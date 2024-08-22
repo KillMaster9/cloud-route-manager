@@ -14,15 +14,15 @@ const (
 )
 
 type Config struct {
-	BussinessVip    string `yaml:"bussinessVip"`
-	ClusterId       string `yaml:"clusterId"`
-	CmpVip          string `yaml:"cmpVip"`
-	Cni             string `yaml:"cni"`
-	DeployNode      string `yaml:"deployNode"`
-	LvmDeviceClass  string `yaml:"lvmDeviceClass"`
-	CmpVipGateway   string `yaml:"managerGateway"`
-	ManagerNetwork  string `yaml:"managerNetwork"`
-	BusinessNetwork string `yaml:"bussinessNetwork"`
+	BussinessVip     string `yaml:"bussinessVip"`
+	ClusterId        string `yaml:"clusterId"`
+	CmpVip           string `yaml:"cmpVip"`
+	Cni              string `yaml:"cni"`
+	DeployNode       string `yaml:"deployNode"`
+	LvmDeviceClass   string `yaml:"lvmDeviceClass"`
+	CmpVipGateway    string `yaml:"managerGateway"`
+	ManagerNetwork   string `yaml:"managerNetwork"`
+	BussinessNetwork string `yaml:"bussinessNetwork"`
 }
 
 type CNIConfig struct {
@@ -91,5 +91,6 @@ func FormatData(data map[string]string) string {
 	for k, v := range data {
 		formattedData += fmt.Sprintf("%s: %s\n", k, v)
 	}
+	fmt.Printf("configmap data: %s", formattedData)
 	return formattedData
 }

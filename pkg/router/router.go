@@ -13,8 +13,8 @@ import (
 
 const (
 	MANAGERROUTETABLE    = 501
-	MANAGERROUTEPREFER   = 501
-	TOMANAGERROUTEPREFER = 502
+	MANAGERROUTEPREFER   = 5001
+	TOMANAGERROUTEPREFER = 5002
 	IPV4MASK             = 32
 	IPV6MASK             = 128
 	SRCPOOL              = "cloud-route-manager-src-pool"
@@ -154,6 +154,9 @@ func EnsureFromPolicyRoute(l log.Logger, managerNetwork, oldmanagerNetwork strin
 
 	if managerChanged {
 		level.Debug(l).Log("op", "setConfig", "msg", "managerNetwork changed, delete old rule")
+		if !strings.Contains(oldmanagerNetwork, "/") {
+			oldmanagerNetwork = fmt.Sprintf("%s/%s", oldmanagerNetwork, "32")
+		}
 		oldSrc, _ := netlink.ParseIPNet(oldmanagerNetwork)
 		if err := DeleteRule(oldSrc, nil, MANAGERROUTETABLE, netlink.FAMILY_V4); err != nil {
 			return fmt.Errorf("failed to delete rule (dst: %v, table: %v) exist: %v", cidr.String(), MANAGERROUTETABLE, err)
@@ -186,6 +189,9 @@ func EnsureToPolicyRoute(l log.Logger, cmpVip, oldCmpVip string, cmpVipChanged b
 
 	if cmpVipChanged {
 		level.Debug(l).Log("op", "setConfig", "msg", "cmpVip changed, delete old rule")
+		if !strings.Contains(oldCmpVip, "/") {
+			oldCmpVip = fmt.Sprintf("%s/%s", oldCmpVip, "32")
+		}
 		oldDst, _ := netlink.ParseIPNet(oldCmpVip)
 		if err := DeleteRule(nil, oldDst, MANAGERROUTETABLE, netlink.FAMILY_V4); err != nil {
 			return fmt.Errorf("failed to delete rule (dst: %v, table: %v) exist: %v", oldCmpVip, MANAGERROUTETABLE, err)
@@ -197,15 +203,19 @@ func EnsureToPolicyRoute(l log.Logger, cmpVip, oldCmpVip string, cmpVipChanged b
 // createIPSet 创建 ipset
 func createIPSet(ipList []string, setName string) error {
 	// 创建 ipset
-	cmd := exec.CommandContext(context.Background(), "ipset", "create", setName, "hash:ip")
+	cmd := exec.CommandContext(context.Background(), "ipset", "create", setName, "hash:net")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to create ipset: %v, output: %s", err, out)
 	}
 
 	// 添加 IP 地址到 ipset
 	for _, ipStr := range ipList {
-		ip := net.ParseIP(ipStr)
-		if ip == nil {
+		if !strings.Contains(ipStr, "/") {
+			ipStr = fmt.Sprintf("%s/%s", ipStr, "32")
+		}
+		ip, err := netlink.ParseIPNet(ipStr)
+		if ip == nil || err != nil {
+			level.Error(log.NewNopLogger()).Log("op", "setConfig", "error", err, "msg", "failed to parse ipStr")
 			continue
 		}
 
@@ -277,7 +287,7 @@ func EnsureIptableRule(src, dst, oldSrc, oldDst string) error {
 	var srcList []string
 	var dstList []string
 	srcList = append(srcList, strings.Split(src, ",")...)
-	dstList = append(srcList, strings.Split(dst, ",")...)
+	dstList = append(dstList, strings.Split(dst, ",")...)
 
 	// 创建 ipset
 	if err := createIPSet(srcList, SRCPOOL); err != nil {
@@ -299,6 +309,7 @@ func EnsureIptableRule(src, dst, oldSrc, oldDst string) error {
 }
 
 func UpdateIptablesRule(l log.Logger, src, dst, oldSrc, oldDst string) error {
+	level.Debug(l).Log("src", src, "dst", dst, "oldSrc", oldSrc, "oldDst", oldDst)
 	newKey := src + dst
 	oldKey := oldSrc + oldDst
 
