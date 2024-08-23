@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	CNIFILENAME = "/etc/10-kuryr.conflist"
+	CNIFILENAME = "/etc/10-iveth.conflist"
 )
 
 type Config struct {
