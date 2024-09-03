@@ -254,7 +254,7 @@ func checkAndDeleteExistingIptablesRules(srcSetName, dstSetName string) error {
 
 	// 执行 iptables 检查命令
 	if out, err := cmdCheck.CombinedOutput(); err != nil {
-		if strings.Contains(string(out), "No chain/target/match by that name") || strings.Contains(string(out), "doesn't exist") {
+		if strings.Contains(string(out), "No chain/target/match by that name") || strings.Contains(string(out), "doesn't exist") || strings.Contains(string(out), "matching rule exist in that chain") {
 			// 规则不存在，无需删除
 			return nil
 		}
@@ -338,7 +338,7 @@ func deleteIpsetResource(setName string) error {
 	cmdDelete := exec.CommandContext(context.Background(), "ipset", "destroy", setName)
 
 	// 执行删除 ipset 命令
-	if out, err := cmdDelete.CombinedOutput(); err != nil {
+	if out, err := cmdDelete.CombinedOutput(); err != nil && !strings.Contains(string(out), "not exist") {
 		return fmt.Errorf("failed to delete ipset resource: %v, output: %s", err, out)
 	}
 
