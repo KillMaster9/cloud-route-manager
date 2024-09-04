@@ -9,6 +9,7 @@ import (
 	"net"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 const (
@@ -272,7 +273,7 @@ func checkAndDeleteExistingIptablesRules(srcSetName, dstSetName string) error {
 		return fmt.Errorf("failed to delete iptables rule: %v, output: %s", err, out)
 	}
 
-	// 删除 ipset 资源
+	// 删除 ipset 资源，ipset资源仅被iptable使用，但是删除iptables规则后，ipset资源仍然不能被立即删除
 	if err := deleteIpsetResource(srcSetName); err != nil {
 		return fmt.Errorf("failed to delete ipset resource %s: %v", srcSetName, err)
 	}
@@ -334,11 +335,25 @@ func UpdateIptablesRule(l log.Logger, src, dst, oldSrc, oldDst string) error {
 
 // deleteIpsetResource 删除指定名称的ipset资源。
 func deleteIpsetResource(setName string) error {
+	tryCount := 0
 	// 构建删除 ipset 命令
+again:
 	cmdDelete := exec.CommandContext(context.Background(), "ipset", "destroy", setName)
 
 	// 执行删除 ipset 命令
-	if out, err := cmdDelete.CombinedOutput(); err != nil && !strings.Contains(string(out), "not exist") {
+	if out, err := cmdDelete.CombinedOutput(); err != nil {
+		if strings.Contains(string(out), "not exist") {
+			return nil
+		}
+		if strings.Contains(string(out), "in use") {
+			tryCount++
+			if tryCount > 3 {
+				return fmt.Errorf("failed to delete ipset resource: %v, output: %s", err, out)
+			}
+			time.Sleep(1 * time.Second)
+			goto again
+
+		}
 		return fmt.Errorf("failed to delete ipset resource: %v, output: %s", err, out)
 	}
 

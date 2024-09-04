@@ -29,11 +29,12 @@ type CNIConfig struct {
 	Name       string `json:"name"`
 	CniVersion string `json:"cniVersion"`
 	Plugins    []struct {
-		Type        string   `json:"type"`
-		KuryrConf   string   `json:"kuryr_conf,omitempty"`
-		Debug       bool     `json:"debug,omitempty"`
-		ServiceCIDR []string `json:"serviceCIDR,omitempty"`
-		HijackCIDR  []string `json:"hijackCIDR,omitempty"`
+		Type         string          `json:"type"`
+		KuryrConf    string          `json:"kuryr_conf,omitempty"`
+		Debug        bool            `json:"debug,omitempty"`
+		ServiceCIDR  []string        `json:"serviceCIDR,omitempty"`
+		HijackCIDR   []string        `json:"hijackCIDR,omitempty"`
+		Capabilities map[string]bool `json:"capabilities,omitempty"`
 	} `json:"plugins"`
 }
 
