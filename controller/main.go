@@ -199,6 +199,9 @@ func (c *Controller) SetPodRoute(l log.Logger, icksConfig *config.Config) error 
 
 	if update {
 		level.Info(l).Log("op", "setConfig", "msg", "update cni config file")
+		// update hosts file
+		config.UpdateHostsFile(icksConfig.CmpVip)
+
 		if err = c.Client.UpdateSystemPodRoute(); err != nil {
 			level.Error(l).Log("op", "setConfig", "error", err, "msg", "failed to update system pod route")
 			return err

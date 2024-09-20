@@ -1,12 +1,14 @@
 package config
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"io/ioutil"
 	"os"
+	"strings"
 )
 
 const (
@@ -94,4 +96,52 @@ func FormatData(data map[string]string) string {
 	}
 	fmt.Printf("configmap data: %s", formattedData)
 	return formattedData
+}
+
+func UpdateHostsFile(newIP string) {
+	// 打开 /etc/hosts 文件进行读取
+	fileName := "/cloud-route-manager/hosts"
+	file, err := os.OpenFile(fileName, os.O_RDWR, 0644)
+	if err != nil {
+		fmt.Println("Error opening file:", err)
+		return
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	var lines []string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, "cr.incloudos.com") {
+			// 如果找到了目标域名，则替换 IP 地址
+			parts := strings.Fields(line)
+			if len(parts) > 1 {
+				parts[0] = newIP // 替换 IP 地址
+				line = strings.Join(parts, " ")
+			}
+		}
+		lines = append(lines, line)
+	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Println("Error reading file:", err)
+		return
+	}
+
+	// 清空文件内容
+	file.Truncate(0)
+	file.Seek(0, 0)
+
+	// 写入修改后的内容
+	writer := bufio.NewWriter(file)
+	for _, line := range lines {
+		_, err := writer.WriteString(line + "\n")
+		if err != nil {
+			fmt.Println("Error writing to file:", err)
+			return
+		}
+	}
+	writer.Flush()
+
+	fmt.Println("Hosts file updated successfully.")
 }

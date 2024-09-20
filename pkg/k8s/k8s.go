@@ -276,11 +276,13 @@ func (c *Client) UpdateSystemPodRoute() error {
 	kubeEventerLabelSelector := map[string]string{"app": "kube-eventer"}
 	jaegerLabelSelector := map[string]string{"app": "jaeger"}
 	icksAgentLabelSelector := map[string]string{"app": "icks-agent"}
+	ivethControllerLabelSelector := map[string]string{"app.kubernetes.io/component": "controller"}
 	systemPod := []KeyValue{
 		{"skywalking-go", oapLabelSelector},
 		{"kube-system", kubeEventerLabelSelector},
 		{"istio-system", jaegerLabelSelector},
-		{"kube-system", icksAgentLabelSelector}}
+		{"kube-system", icksAgentLabelSelector},
+		{"kube-system", ivethControllerLabelSelector}}
 
 	for _, pod := range systemPod {
 		err := c.RestartSystemPod(l, pod.Key, nodeName, pod.Value)
