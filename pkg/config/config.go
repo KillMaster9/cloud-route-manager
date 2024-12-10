@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -25,6 +26,7 @@ type Config struct {
 	ManagerGateway   string `json:"managerGateway" yaml:"managerGateway"`
 	ManagerNetwork   string `json:"managerNetwork" yaml:"managerNetwork"`
 	BussinessNetwork string `json:"bussinessNetwork" yaml:"bussinessNetwork"`
+	ExternalNetwork  string `json:"externalNetwork" yaml:"externalNetwork"`
 }
 
 type CNIConfig struct {
@@ -40,14 +42,25 @@ type CNIConfig struct {
 	} `json:"plugins"`
 }
 
-func UpdateCNIConfigFile(l log.Logger, hjckRoute string) (bool, error) {
+func UpdateCNIConfigFile(l log.Logger, hjckRoute []string) (bool, error) {
 	update := false
+	trys := 0
+	base := 1 * time.Second
 	// 读取配置文件
+again:
 	data, err := ioutil.ReadFile(CNIFILENAME)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return update, nil
+			if trys >= 6 {
+				level.Error(l).Log("CNI config file not found, please check the /etc/cni/net.d/")
+				return update, nil
+			}
+			trys++
+			level.Debug(l).Log("CNI config file not found, wait 15s....")
+			time.Sleep(base << trys)
+			goto again
 		}
+
 		level.Debug(l).Log("Error reading file:", err)
 		return update, err
 	}
@@ -63,12 +76,7 @@ func UpdateCNIConfigFile(l log.Logger, hjckRoute string) (bool, error) {
 	// 修改 serviceCIDR 的值
 	for i, plugin := range config.Plugins {
 		if plugin.Type == "coordinator" {
-			for _, cidr := range plugin.HijackCIDR {
-				if cidr == hjckRoute {
-					return update, nil
-				}
-			}
-			config.Plugins[i].HijackCIDR = []string{hjckRoute}
+			config.Plugins[i].HijackCIDR = hjckRoute
 			break
 		}
 	}

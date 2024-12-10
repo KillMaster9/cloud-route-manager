@@ -26,6 +26,9 @@ import (
 	"github.com/vishvananda/netlink"
 	"io/ioutil"
 	"os"
+	"sort"
+	"strings"
+	"time"
 )
 
 type Controller struct {
@@ -97,6 +100,10 @@ func (c *Controller) SetPolicyRoute(l log.Logger, config *config.Config) error {
 		return err
 	}
 
+	if err := router.EnsureExternalNetworkToPolicyRoute(l, config, oldResource); err != nil {
+		return fmt.Errorf("failed to ensure external network to policy route: %v", err)
+	}
+
 	// ip route add default via cmpVipGateway table MANAGERROUTETABLE
 	if err := router.EnsureRoutes(config.ManagerGateway, router.MANAGERROUTETABLE); err != nil {
 		return fmt.Errorf("failed to ensure routes: %v", err)
@@ -107,7 +114,7 @@ func (c *Controller) SetPolicyRoute(l log.Logger, config *config.Config) error {
 
 func (c *Controller) MarkSynced(l log.Logger) {
 	c.synced = true
-	level.Info(l).Log("event", "stateSynced", "msg", "controller synced")
+	level.Info(l).Log("event", "stateSynced", "msg", "controller-arm64-amd64-arm64-amd64-amd64-arm64-arm64-amd64 synced")
 }
 func main() {
 	var (
@@ -124,7 +131,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	level.Info(logger).Log("Cloud-route-manager controller starting ")
+	level.Info(logger).Log("Cloud-route-manager controller-arm64-amd64-arm64-amd64-amd64-arm64-arm64-amd64 starting ")
 
 	if *namespace == "" {
 		bs, err := ioutil.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
@@ -161,6 +168,10 @@ func main() {
 func (c *Controller) SetPodRoute(l log.Logger, icksConfig *config.Config) error {
 	var oldCmpVip string
 	var oldBusinessNetwork string
+	var oldSubnetList []string
+	var subnetList []string
+	oldSubnetMap := make(map[string]string)
+	newSubnetMap := make(map[string]string)
 
 	if icksConfig.Cni != "iveth" {
 		return nil
@@ -173,41 +184,62 @@ func (c *Controller) SetPodRoute(l log.Logger, icksConfig *config.Config) error 
 		return fmt.Errorf("configuration cmpVip is missing, cloud-router-manager will not function")
 	}
 
-	if oldResource != nil && oldResource.Data["cmpVip"] == icksConfig.CmpVip && oldResource.Data["bussinessNetwork"] == icksConfig.BussinessNetwork {
+	if oldResource != nil && oldResource.Data["cmpVip"] == icksConfig.CmpVip && oldResource.Data["bussinessNetwork"] == icksConfig.BussinessNetwork && oldResource.Data["externalNetwork"] == icksConfig.ExternalNetwork {
 		return nil
 	}
 	level.Info(l).Log("op", "setPodRoute", "msg", "start to set pod route")
 
 	if oldResource != nil {
-		oldCmpVip = oldResource.Data["cmpVip"]
+		oldCmpVip = fmt.Sprintf("%s/%s", oldResource.Data["cmpVip"], "24")
 		oldBusinessNetwork = oldResource.Data["bussinessNetwork"]
+		if val, ok := oldResource.Data["externalNetwork"]; ok {
+			oldSubnetMap, oldSubnetList = router.ParseExternalConfig(val)
+		}
+		oldSubnetMap["cmpVip"] = oldCmpVip
+		oldSubnetList = append(oldSubnetList, oldCmpVip)
 	}
 
-	cmpVip := fmt.Sprintf("%s/%s", icksConfig.CmpVip, "32")
+	cmpVip := fmt.Sprintf("%s/%s", icksConfig.CmpVip, "24")
 	_, err := netlink.ParseIPNet(cmpVip)
 	if err != nil {
 		level.Error(l).Log("op", "setConfig", "error", err, "msg", "failed to parse cmpVip")
 		return err
 	}
 
+	newSubnetMap, subnetList = router.ParseExternalConfig(icksConfig.ExternalNetwork)
+	newSubnetMap["cmpVip"] = cmpVip
+	subnetList = append(subnetList, cmpVip)
+
 	// Update CNI config file
-	update, err := config.UpdateCNIConfigFile(l, cmpVip)
+	update, err := config.UpdateCNIConfigFile(l, subnetList)
 	if err != nil {
 		level.Error(l).Log("op", "setConfig", "error", err, "msg", "failed to update cni config file")
 		return err
 	}
+	time.Sleep(10 * time.Second)
 
-	if update {
+	cmpVipChanged, err := router.CheckCmpVIPChanged(newSubnetMap, oldSubnetMap)
+	if err != nil {
+		return err
+	}
+	if cmpVipChanged {
 		level.Info(l).Log("op", "setConfig", "msg", "update cni config file")
 		// update hosts file
 		config.UpdateHostsFile(icksConfig.CmpVip)
+		// CRI to sync network config from confDir periodically to detect network config updates in every 5 seconds
+	}
 
-		if err = c.Client.UpdateSystemPodRoute(); err != nil {
+	if update {
+		if err = c.Client.UpdateSystemPodRoute(newSubnetMap, oldSubnetMap, cmpVipChanged); err != nil {
 			level.Error(l).Log("op", "setConfig", "error", err, "msg", "failed to update system pod route")
 			return err
 		}
 	}
-	if err = router.UpdateIptablesRule(l, icksConfig.BussinessNetwork, cmpVip, oldBusinessNetwork, oldCmpVip); err != nil {
+	sort.Strings(subnetList)
+	sort.Strings(oldSubnetList)
+	newSubnetStr := strings.Join(subnetList, ",")
+	oldSubnetStr := strings.Join(oldSubnetList, ",")
+	if err = router.UpdateIptablesRule(l, icksConfig.BussinessNetwork, newSubnetStr, oldBusinessNetwork, oldSubnetStr); err != nil {
 		return err
 	}
 

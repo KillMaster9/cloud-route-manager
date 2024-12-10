@@ -4,6 +4,7 @@ package k8s
 
 import (
 	"cloud-route-manager/pkg/config"
+	"cloud-route-manager/pkg/router"
 	"context"
 	"errors"
 	"fmt"
@@ -257,7 +258,7 @@ func (c *Client) sync(key interface{}) SyncState {
 	}
 }
 
-func (c *Client) UpdateSystemPodRoute() error {
+func (c *Client) UpdateSystemPodRoute(newSubnetMap, oldSubnetMap map[string]string, cmpVipChanged bool) error {
 	l := log.With(c.logger, "configmap")
 	//Get nodeName
 	nodeName := os.Getenv("NODE_NAME")
@@ -276,26 +277,42 @@ func (c *Client) UpdateSystemPodRoute() error {
 	kubeEventerLabelSelector := map[string]string{"app": "kube-eventer"}
 	jaegerLabelSelector := map[string]string{"app": "jaeger"}
 	icksAgentLabelSelector := map[string]string{"app": "icks-agent"}
-	ivethControllerLabelSelector := map[string]string{"app.kubernetes.io/component": "controller"}
+	ivethControllerLabelSelector := map[string]string{"app.kubernetes.io/component": "controller-arm64-amd64-arm64-amd64-amd64-arm64-arm64-amd64"}
 	systemPod := []KeyValue{
-		{"skywalking-go", oapLabelSelector},
+		{"istio-system", oapLabelSelector},
 		{"kube-system", kubeEventerLabelSelector},
 		{"istio-system", jaegerLabelSelector},
 		{"kube-system", icksAgentLabelSelector},
 		{"kube-system", ivethControllerLabelSelector}}
 
-	for _, pod := range systemPod {
-		err := c.RestartSystemPod(l, pod.Key, nodeName, pod.Value)
+	if cmpVipChanged {
+		for _, pod := range systemPod {
+			err := c.RestartSystemPod(l, pod.Key, nodeName, pod.Value)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if router.CheckVeleroNetworkChanged(newSubnetMap, oldSubnetMap) {
+		fmt.Println("velero Pod external network has changed, restart velero pod.")
+		err := c.RestartSystemPod(l, "velero", nodeName, nil)
 		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 
 }
 
 func (c *Client) RestartSystemPod(l log.Logger, namespace string, nodeName string, label map[string]string) error {
-	Pods, err := c.client.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{LabelSelector: labels.FormatLabels(label)})
+	ListOptions := metav1.ListOptions{}
+	if label != nil {
+		ListOptions = metav1.ListOptions{LabelSelector: labels.FormatLabels(label)}
+	}
+
+	Pods, err := c.client.CoreV1().Pods(namespace).List(context.TODO(), ListOptions)
 	if err != nil {
 		level.Error(l).Log("event", "getPods", "error", err, "msg", "get  pods failed by labelSelector:", label)
 		return err

@@ -1,13 +1,18 @@
 package router
 
 import (
+	"cloud-route-manager/pkg/config"
 	"context"
 	"fmt"
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/vishvananda/netlink"
+	v1 "k8s.io/api/core/v1"
 	"net"
 	"os/exec"
+	"reflect"
+	"sigs.k8s.io/yaml"
+	"sort"
 	"strings"
 	"time"
 )
@@ -169,7 +174,7 @@ func EnsureFromPolicyRoute(l log.Logger, managerNetwork, oldmanagerNetwork strin
 
 func EnsureToPolicyRoute(l log.Logger, cmpVip, oldCmpVip string, cmpVipChanged bool) error {
 	if !strings.Contains(cmpVip, "/") {
-		cmpVip = fmt.Sprintf("%s/%s", cmpVip, "32")
+		cmpVip = fmt.Sprintf("%s/%s", cmpVip, "24")
 	}
 	dst, err := netlink.ParseIPNet(cmpVip)
 	if err != nil {
@@ -191,13 +196,71 @@ func EnsureToPolicyRoute(l log.Logger, cmpVip, oldCmpVip string, cmpVipChanged b
 	if cmpVipChanged {
 		level.Debug(l).Log("op", "setConfig", "msg", "cmpVip changed, delete old rule")
 		if !strings.Contains(oldCmpVip, "/") {
-			oldCmpVip = fmt.Sprintf("%s/%s", oldCmpVip, "32")
+			oldCmpVip = fmt.Sprintf("%s/%s", oldCmpVip, "24")
 		}
 		oldDst, _ := netlink.ParseIPNet(oldCmpVip)
 		if err := DeleteRule(nil, oldDst, MANAGERROUTETABLE, netlink.FAMILY_V4); err != nil {
 			return fmt.Errorf("failed to delete rule (dst: %v, table: %v) exist: %v", oldCmpVip, MANAGERROUTETABLE, err)
 		}
 	}
+	return nil
+}
+
+func EnsureExternalNetworkToPolicyRoute(l log.Logger, newConfig *config.Config, oldConfigMap *v1.ConfigMap) error {
+	var oldConfig *config.Config
+
+	if oldConfigMap != nil {
+		oldConfig = &config.Config{}
+		err := yaml.Unmarshal([]byte(config.FormatData(oldConfigMap.Data)), oldConfig)
+		if err != nil {
+			level.Error(l).Log("event", "configStale", "error", err)
+			return fmt.Errorf("failed to unmarshal old config: %v", err)
+		}
+	}
+
+	addNetwork, delNetwork, _ := DeltatExternalNetwork(newConfig, oldConfig)
+	//Add new networkCidr to policy route
+	for _, network := range addNetwork {
+		level.Debug(l).Log("op", "setConfig", "msg", "add network to policy route", "network", network)
+		dst, err := netlink.ParseIPNet(network)
+		if err != nil {
+			level.Error(l).Log("op", "setConfig", "error", err, "msg", "failed to parse", network)
+			return err
+		}
+
+		found, _, err := CheckIfRuleExist(nil, dst, MANAGERROUTETABLE, netlink.FAMILY_V4)
+		if err != nil {
+			return fmt.Errorf("failed to check rule (dst: %v, table: %v) err: %v", network, MANAGERROUTETABLE, err)
+		}
+		if !found {
+			level.Debug(l).Log("op", "setConfig", "msg", "rule not exist, create rule")
+			if err := AddRule(nil, dst, MANAGERROUTETABLE, netlink.FAMILY_V4, TOMANAGERROUTEPREFER); err != nil {
+				return fmt.Errorf("failed to add rule (dst: %v, table: %v) err: %v", network, MANAGERROUTETABLE, err)
+			}
+		}
+	}
+
+	//delete networkCidr to policy route
+	for _, network := range delNetwork {
+		level.Debug(l).Log("op", "setConfig", "msg", "delete network from policy route", "network", network)
+		dst, err := netlink.ParseIPNet(network)
+		if err != nil {
+			level.Error(l).Log()
+			return fmt.Errorf("failed to parse %v", network)
+		}
+
+		found, _, err := CheckIfRuleExist(nil, dst, MANAGERROUTETABLE, netlink.FAMILY_V4)
+		if err != nil {
+			return fmt.Errorf("failed to check rule (dst: %v, table: %v) err: %v", network, MANAGERROUTETABLE, err)
+		}
+
+		if found {
+			if err := DeleteRule(nil, dst, MANAGERROUTETABLE, netlink.FAMILY_V4); err != nil {
+				return fmt.Errorf("failed to delete rule (dst: %v, table: %v) exist: %v", network, MANAGERROUTETABLE, err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -257,6 +320,8 @@ func checkAndDeleteExistingIptablesRules(srcSetName, dstSetName string) error {
 	if out, err := cmdCheck.CombinedOutput(); err != nil {
 		if strings.Contains(string(out), "No chain/target/match by that name") || strings.Contains(string(out), "doesn't exist") || strings.Contains(string(out), "matching rule exist in that chain") {
 			// 规则不存在，无需删除
+			deleteIpsetResource(srcSetName)
+			deleteIpsetResource(dstSetName)
 			return nil
 		}
 		return fmt.Errorf("failed to check iptables rule: %v, output: %s", err, out)
@@ -292,10 +357,12 @@ func EnsureIptableRule(src, dst, oldSrc, oldDst string) error {
 
 	// 创建 ipset
 	if err := createIPSet(srcList, SRCPOOL); err != nil {
+		deleteIpsetResource(SRCPOOL)
 		fmt.Printf("Failed to create srclist ipset: %v\n", err)
 		return err
 	}
 	if err := createIPSet(dstList, DSTPOOL); err != nil {
+		deleteIpsetResource(DSTPOOL)
 		fmt.Printf("Failed to create dstlist ipset: %v\n", err)
 		return err
 	}
@@ -347,7 +414,7 @@ again:
 		}
 		if strings.Contains(string(out), "in use") {
 			tryCount++
-			if tryCount > 3 {
+			if tryCount > 10 {
 				return fmt.Errorf("failed to delete ipset resource: %v, output: %s", err, out)
 			}
 			time.Sleep(1 * time.Second)
@@ -358,4 +425,165 @@ again:
 	}
 
 	return nil
+}
+
+func DeltatExternalNetwork(cfg *config.Config, old *config.Config) (addNetwork []string, delNetwork []string, err error) {
+	var oldSubnetList []string
+	var subnetList []string
+
+	if cfg == nil {
+		return nil, nil, nil
+	}
+	_, subnetList = ParseExternalConfig(cfg.ExternalNetwork)
+
+	if old != nil {
+		_, oldSubnetList = ParseExternalConfig(old.ExternalNetwork)
+	}
+
+	addNetwork, delNetwork = DiffSubnetList(subnetList, oldSubnetList)
+
+	return addNetwork, delNetwork, nil
+}
+
+func ParseExternalConfig(externalNetwork string) (map[string]string, []string) {
+	externalMap := make(map[string]string)
+	var externalList []string
+	if len(externalNetwork) == 0 {
+		return externalMap, nil
+	}
+	fmt.Printf("configMap icluster-info's externalNetwork: %s\n", externalNetwork)
+	// externalNetwork config example："10.0.0.0/24,10.1.0.0/24,csi:10.2.0.0/24,velero:10.3.0.0/24"
+	subnets := strings.Split(externalNetwork, ",")
+
+	// 遍历每个子网段，解析为IPNet对象
+	for _, subnetStr := range subnets {
+		if strings.Contains(subnetStr, ":") {
+			temps := strings.Split(subnetStr, ":")
+			if len(temps) != 2 {
+				continue
+			}
+			subnetName := strings.ReplaceAll(temps[0], " ", "")
+			subnetCidr := strings.ReplaceAll(temps[1], " ", "")
+			if len(subnetCidr) == 0 {
+				continue
+			}
+			if !strings.Contains(subnetCidr, "/") {
+				subnetCidr = fmt.Sprintf("%s/%d", subnetCidr, 32)
+			}
+
+			_, _, err := net.ParseCIDR(subnetCidr)
+			if err != nil {
+				fmt.Printf("Failed to parse subnet%s: %v\n", subnetStr, err)
+				continue
+			}
+			externalMap[subnetName] = subnetCidr
+			externalList = append(externalList, subnetCidr)
+		} else {
+			if len(subnetStr) == 0 {
+				continue
+			}
+			subnetStr = strings.ReplaceAll(subnetStr, " ", "")
+			if !strings.Contains(subnetStr, "/") {
+				subnetStr = fmt.Sprintf("%s/%d", subnetStr, 32)
+			}
+
+			_, _, err := net.ParseCIDR(subnetStr)
+			if err != nil {
+				fmt.Printf("Failed to parse subnet%s: %v\n", subnetStr, err)
+				continue
+			}
+			externalList = append(externalList, subnetStr)
+		}
+
+	}
+
+	return externalMap, externalList
+}
+
+func DiffSubnetList(newSubnetList, oldSubnetList []string) (addNetwork []string, delNetwork []string) {
+	newSubnetMap := make(map[string]string)
+	oldSubnetMap := make(map[string]string)
+
+	for _, subnet := range newSubnetList {
+		newSubnetMap[subnet] = subnet
+	}
+	for _, subnet := range oldSubnetList {
+		oldSubnetMap[subnet] = subnet
+	}
+	for _, subnet := range oldSubnetList {
+		if _, ok := newSubnetMap[subnet]; !ok {
+			delNetwork = append(delNetwork, subnet)
+		}
+	}
+	for _, subnet := range newSubnetList {
+		if _, ok := oldSubnetMap[subnet]; !ok {
+			addNetwork = append(addNetwork, subnet)
+		}
+	}
+
+	return addNetwork, delNetwork
+}
+
+func CheckCmpVIPChanged(newSubnetMap, oldSubnetMap map[string]string) (bool, error) {
+	var cmpVipChanged bool
+	cmpVip, ok := newSubnetMap["cmpVip"]
+	if !ok {
+		return false, fmt.Errorf("cmpVip not found")
+	}
+	if oldCmpVip, ok := oldSubnetMap["cmpVip"]; !ok || cmpVip != oldCmpVip {
+		fmt.Println("op", "updateSystemPodRoute", "msg", "cmpVip changed, old cmpVip:", oldCmpVip, "new cmpVip:", cmpVip)
+		cmpVipChanged = true
+	}
+	return cmpVipChanged, nil
+}
+
+func CheckExternalNetworkChanged(newSubnetMap, oldSubnetMap map[string]string, controller string) bool {
+	var externalNetworkChanged bool
+	externalNetwork, ok := newSubnetMap[controller]
+	oldExternalNetwork, ok1 := oldSubnetMap[controller]
+	if !ok && !ok1 {
+		return false
+	}
+	if !ok1 || !ok || externalNetwork != oldExternalNetwork {
+		fmt.Println("op", "update", controller, "pod", "msg", "externalNetwork changed, old externalNetwork:", oldExternalNetwork, "new externalNetwork:", externalNetwork)
+		externalNetworkChanged = true
+	}
+
+	return externalNetworkChanged
+
+}
+
+func CheckVeleroNetworkChanged(newSubnetMap, oldSubnetMap map[string]string) bool {
+	var externalNetworkChanged bool
+	var newIPset []string
+	var oldIPset []string
+	for keys, val := range newSubnetMap {
+		if strings.Contains(keys, "velero") {
+			newIPset = append(newIPset, val)
+		}
+	}
+
+	for keys, val := range oldSubnetMap {
+		if strings.Contains(keys, "velero") {
+			oldIPset = append(oldIPset, val)
+		}
+	}
+	if len(newIPset) == 0 && len(oldIPset) == 0 {
+		return false
+	}
+
+	if len(newIPset) != len(oldIPset) {
+		fmt.Println("op", "update", "velero", "pod", "msg", "externalNetwork changed, old externalNetwork:", oldIPset, "new externalNetwork:", newIPset)
+		externalNetworkChanged = true
+	}
+
+	sort.Strings(newIPset)
+	sort.Strings(oldIPset)
+	if !reflect.DeepEqual(newIPset, oldIPset) {
+		fmt.Println("op", "update", "velero", "pod", "msg", "externalNetwork changed, old externalNetwork:", oldIPset, "new externalNetwork:", newIPset)
+		externalNetworkChanged = true
+	}
+
+	return externalNetworkChanged
+
 }
